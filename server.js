@@ -49,7 +49,8 @@ async function generateImageFromText(prompt, taskId) {
 					if (part.inlineData && part.inlineData.data) {
 						// Return base64 data directly for serverless
 						const imageData = part.inlineData.data;
-						const mimeType = part.inlineData.mimeType || 'image/png';
+						const mimeType =
+							part.inlineData.mimeType || 'image/png';
 						const extension = mimeType.split('/')[1] || 'png';
 						const filename = `generated-${taskId}.${extension}`;
 
@@ -254,7 +255,14 @@ app.post('/process', upload.single('image'), async (req, res) => {
 		}
 
 		// Process based on mode
-		const result = await processWithMode(mode, imageBuffer, imageMimeType, imageFilename, prompt, taskId);
+		const result = await processWithMode(
+			mode,
+			imageBuffer,
+			imageMimeType,
+			imageFilename,
+			prompt,
+			taskId
+		);
 
 		// Store result
 		processingResults.set(taskId, {
@@ -310,14 +318,6 @@ app.get('/results', (req, res) => {
 		total: results.length,
 		results,
 	});
-});
-
-// Note: Image serving handled via base64 data URLs in serverless environment
-
-// Note: Output files handled via base64 data URLs in serverless environment
-	} else {
-		res.status(404).json({ error: 'Output file not found' });
-	}
 });
 
 // Delete a specific result
@@ -444,7 +444,14 @@ async function imageToBase64(imagePath) {
 }
 
 // Processing function with different modes
-async function processWithMode(mode, imageBuffer, imageMimeType, imageFilename, prompt, taskId) {
+async function processWithMode(
+	mode,
+	imageBuffer,
+	imageMimeType,
+	imageFilename,
+	prompt,
+	taskId
+) {
 	console.log(`Processing mode: ${mode}`);
 	console.log(`Image filename: ${imageFilename}`);
 	console.log(`Prompt: ${prompt}`);
