@@ -47,23 +47,18 @@ async function generateImageFromText(prompt, taskId) {
 			if (candidate.content && candidate.content.parts) {
 				for (const part of candidate.content.parts) {
 					if (part.inlineData && part.inlineData.data) {
-						// Save the image file
+						// Return base64 data directly for serverless
 						const imageData = part.inlineData.data;
-						const mimeType =
-							part.inlineData.mimeType || 'image/png';
+						const mimeType = part.inlineData.mimeType || 'image/png';
 						const extension = mimeType.split('/')[1] || 'png';
 						const filename = `generated-${taskId}.${extension}`;
-						const filepath = path.join(outputsDir, filename);
 
-						// Convert base64 to buffer and save
-						const buffer = Buffer.from(imageData, 'base64');
-						await fs.promises.writeFile(filepath, buffer);
-
-						console.log(`Generated image saved: ${filepath}`);
+						console.log(`Generated image for task: ${taskId}`);
 						return {
 							filename,
-							filepath,
-							url: `/outputs/${filename}`,
+							base64: imageData,
+							mimeType,
+							dataUrl: `data:${mimeType};base64,${imageData}`,
 						};
 					}
 				}
@@ -124,19 +119,9 @@ async function generateImageFromImage(
 						console.log(`Generated transformed image: ${filename}`);
 						return {
 							filename,
-							base64Data: imageData,
+							base64: imageData,
 							mimeType: mimeType,
-							url: `data:${mimeType};base64,${imageData}`,
-						};
-
-						const buffer = Buffer.from(imageData, 'base64');
-						await fs.promises.writeFile(filepath, buffer);
-
-						console.log(`Transformed image saved: ${filepath}`);
-						return {
-							filename,
-							filepath,
-							url: `/outputs/${filename}`,
+							dataUrl: `data:${mimeType};base64,${imageData}`,
 						};
 					}
 				}
@@ -244,23 +229,11 @@ app.post('/process', upload.single('image'), async (req, res) => {
 						imageUrl,
 						taskId
 					);
-					// For URL downloads, we still use file path temporarily
-					imageBuffer = await fs.promises.readFile(
-						downloadResult.path
-					);
-					imageMimeType = 'image/jpeg'; // Default, can be improved
+					// Use buffer directly from download result
+					imageBuffer = downloadResult.buffer;
+					imageMimeType = downloadResult.contentType || 'image/jpeg';
 					imageFilename = downloadResult.filename;
 					isDownloadedImage = true;
-
-					// Clean up temp file
-					try {
-						await fs.promises.unlink(downloadResult.path);
-					} catch (unlinkError) {
-						console.warn(
-							'Could not clean up temp file:',
-							unlinkError
-						);
-					}
 				} catch (downloadError) {
 					return res.status(400).json({
 						error: 'Failed to download image from URL',
@@ -281,7 +254,7 @@ app.post('/process', upload.single('image'), async (req, res) => {
 		}
 
 		// Process based on mode
-		const result = await processWithMode(mode, imagePath, prompt, taskId);
+		const result = await processWithMode(mode, imageBuffer, imageMimeType, imageFilename, prompt, taskId);
 
 		// Store result
 		processingResults.set(taskId, {
@@ -339,25 +312,9 @@ app.get('/results', (req, res) => {
 	});
 });
 
-// Serve uploaded images
-app.get('/uploads/:filename', (req, res) => {
-	const filename = req.params.filename;
-	const filePath = path.join(uploadsDir, filename);
+// Note: Image serving handled via base64 data URLs in serverless environment
 
-	if (fs.existsSync(filePath)) {
-		res.sendFile(filePath);
-	} else {
-		res.status(404).json({ error: 'Image not found' });
-	}
-});
-
-// Serve output files
-app.get('/outputs/:filename', (req, res) => {
-	const filename = req.params.filename;
-	const filePath = path.join(outputsDir, filename);
-
-	if (fs.existsSync(filePath)) {
-		res.sendFile(filePath);
+// Note: Output files handled via base64 data URLs in serverless environment
 	} else {
 		res.status(404).json({ error: 'Output file not found' });
 	}
@@ -370,15 +327,7 @@ app.delete('/result/:taskId', (req, res) => {
 	if (processingResults.has(taskId)) {
 		const result = processingResults.get(taskId);
 
-		// Clean up files
-		try {
-			const imagePath = path.join(uploadsDir, result.originalImage);
-			if (fs.existsSync(imagePath)) {
-				fs.unlinkSync(imagePath);
-			}
-		} catch (error) {
-			console.error('Error cleaning up files:', error);
-		}
+		// Note: No file cleanup needed in serverless environment
 
 		processingResults.delete(taskId);
 		res.json({ success: true, message: 'Result deleted successfully' });
@@ -418,26 +367,22 @@ async function downloadImageFromUrl(imageUrl, taskId) {
 			throw new Error('URL does not point to an image file');
 		}
 
-		// Generate filename
+		// Generate filename for reference
 		const urlPath = url.pathname;
 		const originalExt = path.extname(urlPath) || '.jpg';
 		const filename = `url-${taskId}-${Date.now()}${originalExt}`;
-		const filePath = path.join(uploadsDir, filename);
 
-		// Create write stream and pipe the response
-		const writer = fs.createWriteStream(filePath);
-		response.data.pipe(writer);
+		// Convert response to buffer for serverless processing
+		const chunks = [];
+		response.data.on('data', (chunk) => chunks.push(chunk));
 
 		// Return promise that resolves when download is complete
 		return new Promise((resolve, reject) => {
-			writer.on('finish', () => {
-				resolve({ path: filePath, filename });
+			response.data.on('end', () => {
+				const buffer = Buffer.concat(chunks);
+				resolve({ buffer, filename, contentType });
 			});
-			writer.on('error', (error) => {
-				// Clean up file on error
-				if (fs.existsSync(filePath)) {
-					fs.unlinkSync(filePath);
-				}
+			response.data.on('error', (error) => {
 				reject(error);
 			});
 		});
@@ -499,9 +444,9 @@ async function imageToBase64(imagePath) {
 }
 
 // Processing function with different modes
-async function processWithMode(mode, imagePath, prompt, taskId) {
+async function processWithMode(mode, imageBuffer, imageMimeType, imageFilename, prompt, taskId) {
 	console.log(`Processing mode: ${mode}`);
-	console.log(`Image path: ${imagePath}`);
+	console.log(`Image filename: ${imageFilename}`);
 	console.log(`Prompt: ${prompt}`);
 	console.log(`Task ID: ${taskId}`);
 
@@ -518,8 +463,8 @@ async function processWithMode(mode, imagePath, prompt, taskId) {
 				return {
 					mode: 'text-to-image',
 					message: `Successfully generated image from prompt: "${prompt}"`,
-					generatedImageUrl: generatedImage.url,
-					base64Data: generatedImage.base64Data,
+					generatedImageUrl: generatedImage.dataUrl,
+					base64Data: generatedImage.base64,
 					mimeType: generatedImage.mimeType,
 					prompt: prompt,
 					style: 'ai_generated',
@@ -547,8 +492,8 @@ async function processWithMode(mode, imagePath, prompt, taskId) {
 					mode: 'image-to-image',
 					message: `Successfully transformed image with prompt: "${prompt}"`,
 					originalImageName: imageFilename,
-					generatedImageUrl: transformedImage.url,
-					base64Data: transformedImage.base64Data,
+					generatedImageUrl: transformedImage.dataUrl,
+					base64Data: transformedImage.base64,
 					mimeType: transformedImage.mimeType,
 					prompt: prompt,
 					transformation: 'ai_remix',
