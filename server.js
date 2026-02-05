@@ -311,6 +311,32 @@ app.get('/result/:taskId', (req, res) => {
 	res.json(result);
 });
 
+// Serve generated images from memory
+app.get('/image/:taskId', (req, res) => {
+	const taskId = req.params.taskId;
+	const result = processingResults.get(taskId);
+
+	if (!result || !result.result.imageData) {
+		return res.status(404).json({ error: 'Image not found' });
+	}
+
+	try {
+		const { base64Data, mimeType } = result.result.imageData;
+		const imageBuffer = Buffer.from(base64Data, 'base64');
+		
+		res.set({
+			'Content-Type': mimeType,
+			'Content-Length': imageBuffer.length,
+			'Cache-Control': 'public, max-age=31536000' // Cache for 1 year
+		});
+		
+		res.send(imageBuffer);
+	} catch (error) {
+		console.error('Error serving image:', error);
+		res.status(500).json({ error: 'Failed to serve image' });
+	}
+});
+
 // List all processing results
 app.get('/results', (req, res) => {
 	const results = Array.from(processingResults.values());
@@ -470,9 +496,8 @@ async function processWithMode(
 				return {
 					mode: 'text-to-image',
 					message: `Successfully generated image from prompt: "${prompt}"`,
-					generatedImageUrl: generatedImage.dataUrl,
-					base64Data: generatedImage.base64,
-					mimeType: generatedImage.mimeType,
+					generatedImageUrl: generatedImage.url,
+					imageData: generatedImage.imageData,
 					prompt: prompt,
 					style: 'ai_generated',
 					dimensions: { width: 1024, height: 1024 },
@@ -499,9 +524,8 @@ async function processWithMode(
 					mode: 'image-to-image',
 					message: `Successfully transformed image with prompt: "${prompt}"`,
 					originalImageName: imageFilename,
-					generatedImageUrl: transformedImage.dataUrl,
-					base64Data: transformedImage.base64,
-					mimeType: transformedImage.mimeType,
+					generatedImageUrl: transformedImage.url,
+					imageData: transformedImage.imageData,
 					prompt: prompt,
 					transformation: 'ai_remix',
 					processedAt: new Date().toISOString(),
