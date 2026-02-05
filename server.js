@@ -57,9 +57,11 @@ async function generateImageFromText(prompt, taskId) {
 						console.log(`Generated image for task: ${taskId}`);
 						return {
 							filename,
-							base64: imageData,
-							mimeType,
-							dataUrl: `data:${mimeType};base64,${imageData}`,
+							imageData: {
+								base64Data: imageData,
+								mimeType
+							},
+							url: `/image/${taskId}`,
 						};
 					}
 				}
@@ -120,9 +122,11 @@ async function generateImageFromImage(
 						console.log(`Generated transformed image: ${filename}`);
 						return {
 							filename,
-							base64: imageData,
-							mimeType: mimeType,
-							dataUrl: `data:${mimeType};base64,${imageData}`,
+							imageData: {
+								base64Data: imageData,
+								mimeType
+							},
+							url: `/image/${taskId}`,
 						};
 					}
 				}
@@ -323,13 +327,13 @@ app.get('/image/:taskId', (req, res) => {
 	try {
 		const { base64Data, mimeType } = result.result.imageData;
 		const imageBuffer = Buffer.from(base64Data, 'base64');
-		
+
 		res.set({
 			'Content-Type': mimeType,
 			'Content-Length': imageBuffer.length,
-			'Cache-Control': 'public, max-age=31536000' // Cache for 1 year
+			'Cache-Control': 'public, max-age=31536000', // Cache for 1 year
 		});
-		
+
 		res.send(imageBuffer);
 	} catch (error) {
 		console.error('Error serving image:', error);
