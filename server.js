@@ -19,6 +19,31 @@ const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
 const { GoogleGenAI, types } = require('@google/genai');
 const googleGenAiClient = new GoogleGenAI({ apiKey: process.env.GOOGLE_API_KEY });
 
+// Import Vercel Blob
+const { put } = require('@vercel/blob');
+
+// Helper to upload to Vercel Blob or fallback
+async function uploadToStorage(buffer, filename, contentType) {
+    // Only upload if token is present
+    if (process.env.BLOB_READ_WRITE_TOKEN) {
+        try {
+            console.log(`Uploading ${filename} to Vercel Blob...`);
+            const blob = await put(filename, buffer, {
+                access: 'public',
+                contentType: contentType,
+            });
+            console.log(`Upload success: ${blob.url}`);
+            return blob.url;
+        } catch (error) {
+            console.error('Blob upload failed:', error);
+            // Fallback to null (memory/local)
+            return null;
+        }
+    }
+    console.log('BLOB_READ_WRITE_TOKEN not found, skipping blob upload.');
+    return null;
+}
+
 // Function to generate actual image using Gemini API (like Python code)
 async function generateImageFromText(prompt, taskId) {
 	try {
@@ -260,11 +285,15 @@ async function generateVideo(params, taskId) {
 
             const videoFilename = `generated-video-${taskId}.mp4`;
 
+            // Upload to Vercel Blob
+            const uploadedUrl = await uploadToStorage(videoBuffer, videoFilename, 'video/mp4');
+
 			return {
 				filename: videoFilename,
-                uri: videoUri, // Keep the Google URI if needed
+                uri: videoUri, // Keep the Google URI
                 buffer: videoBuffer,
 				mimeType: 'video/mp4',
+                uploadedUrl: uploadedUrl // Return the permanent URL if available
 			};
 
 		} else {
@@ -605,9 +634,10 @@ app.post('/generate-video', upload.fields([
 			result: {
                 message: 'Video generated successfully',
                 filename: videoResult.filename,
-                videoBuffer: videoResult.buffer, // Verify memory usage for large videos
+                videoBuffer: videoResult.buffer, // Consider removing this if we have persistent storage to save RAM
                 uri: videoResult.uri,
-                url: `/video/${taskId}`
+                uploadedUrl: videoResult.uploadedUrl,
+                url: videoResult.uploadedUrl || `/video/${taskId}`
             },
 			timestamp: new Date().toISOString(),
 		});
@@ -618,7 +648,7 @@ app.post('/generate-video', upload.fields([
             status: 'completed',
             result: {
                 message: 'Video generated successfully',
-                videoUrl: `/video/${taskId}`,
+                videoUrl: videoResult.uploadedUrl || `/video/${taskId}`, // Prioritize persistent URL
                 dashboardUrl: videoResult.uri
             }
         });
@@ -788,10 +818,14 @@ async function processWithMode(
 					taskId
 				);
 
+                // Upload to Blob
+                const genBuffer = Buffer.from(generatedImage.imageData.base64Data, 'base64');
+                const genUrl = await uploadToStorage(genBuffer, generatedImage.filename, generatedImage.imageData.mimeType);
+
 				return {
 					mode: 'text-to-image',
 					message: `Successfully generated image from prompt: "${prompt}"`,
-					generatedImageUrl: generatedImage.url,
+					generatedImageUrl: genUrl || generatedImage.url,
 					imageData: generatedImage.imageData,
 					prompt: prompt,
 					style: 'ai_generated',
@@ -815,11 +849,15 @@ async function processWithMode(
 					taskId
 				);
 
+                // Upload to Blob
+                const transBuffer = Buffer.from(transformedImage.imageData.base64Data, 'base64');
+                const transUrl = await uploadToStorage(transBuffer, transformedImage.filename, transformedImage.imageData.mimeType);
+
 				return {
 					mode: 'image-to-image',
 					message: `Successfully transformed image with prompt: "${prompt}"`,
 					originalImageName: imageFilename,
-					generatedImageUrl: transformedImage.url,
+					generatedImageUrl: transUrl || transformedImage.url,
 					imageData: transformedImage.imageData,
 					prompt: prompt,
 					transformation: 'ai_remix',

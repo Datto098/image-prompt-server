@@ -32,6 +32,14 @@ npm run dev
 npm start
 ```
 
+### Vercel Blob Setup (Optional but Recommended)
+Để lưu trữ ảnh/video vĩnh viễn (tránh lỗi 404 trên Vercel), bạn cần setup Vercel Blob:
+1. Tạo Blob store trên Vercel Dashboard.
+2. Lấy `BLOB_READ_WRITE_TOKEN` và thêm vào `.env`.
+```
+BLOB_READ_WRITE_TOKEN=vercel_blob_rw_...
+```
+
 ## API Endpoints
 
 ### 1. Health Check
