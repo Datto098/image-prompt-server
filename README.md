@@ -100,7 +100,66 @@ DELETE /result/:taskId
 ```
 Xóa kết quả và file liên quan.
 
-## Cách sử dụng với curl
+### 7. Xóa kết quả
+```
+DELETE /result/:taskId
+```
+Xóa kết quả và file liên quan.
+
+### 8. Generate Video
+```
+POST /generate-video
+```
+Tạo video từ text hoặc ảnh (Veo model).
+
+**Parameters:**
+- `prompt`: Text prompt (bắt buộc cho text-to-video)
+- `mode`: `text_to_video` (default), `frames_to_video`, `references_to_video`
+- `resolution`: `720p` (default), `1080p`
+- `aspectRatio`: `16:9` (default), `9:16`, `1:1`, etc.
+- `model`: `veo-3.1-fast-generate-preview`
+- `fps`: 24 (optional)
+
+**File Uploads:**
+- `startFrame`: Ảnh bắt đầu (cho `frames_to_video`)
+- `endFrame`: Ảnh kết thúc (optional, cho `frames_to_video`)
+- `referenceImages`: Danh sách ảnh tham khảo (cho `references_to_video`)
+- `styleImage`: Ảnh style (cho `references_to_video`)
+
+**Image URLs (Alternative to file uploads):**
+- `startFrameUrl`: URL ảnh bắt đầu
+- `endFrameUrl`: URL ảnh kết thúc
+- `styleImageUrl`: URL ảnh style
+
+**Response:**
+```json
+{
+  "success": true,
+  "taskId": "uuid",
+  "result": {
+    "message": "Video generated successfully",
+    "videoUrl": "/video/uuid",
+    "dashboardUrl": "https://..."
+  }
+}
+```
+
+### 9. Xem Video
+```
+GET /video/:taskId
+```
+Xem video đã tạo.
+
+### Example: Frames to Video with URL
+```bash
+curl -X POST http://localhost:3000/generate-video \
+  -H "Content-Type: application/json" \
+  -d '{
+    "mode": "frames_to_video",
+    "prompt": "Cinematic zoom in",
+    "startFrameUrl": "https://img.kalocdn.com/tiktok.product.images/tos-alisg-i-aphluv4xwc-sg/7c073c014fbb4bd0b9a068f1fc1626bb.png"
+  }'
+```
 
 ### Upload ảnh và prompt:
 ```bash
@@ -169,7 +228,7 @@ image-prompt-server/
 Để tùy chỉnh logic xử lý ảnh, hãy sửa đổi function `processImageWithPrompt()` trong [server.js](server.js). Hiện tại nó chỉ return mock data, bạn có thể tích hợp với:
 
 - OpenAI Vision API
-- Google Vision API  
+- Google Vision API
 - Ideogram API
 - Các AI service khác
 

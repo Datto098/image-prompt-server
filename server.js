@@ -12,8 +12,12 @@ require('dotenv').config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Initialize Google AI
+// Initialize Google AI (Legacy)
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
+
+// Initialize Google GenAI (Veo)
+const { GoogleGenAI, types } = require('@google/genai');
+const googleGenAiClient = new GoogleGenAI({ apiKey: process.env.GOOGLE_API_KEY });
 
 // Function to generate actual image using Gemini API (like Python code)
 async function generateImageFromText(prompt, taskId) {
@@ -59,7 +63,7 @@ async function generateImageFromText(prompt, taskId) {
 							filename,
 							imageData: {
 								base64Data: imageData,
-								mimeType
+								mimeType,
 							},
 							url: `/image/${taskId}`,
 						};
@@ -124,7 +128,7 @@ async function generateImageFromImage(
 							filename,
 							imageData: {
 								base64Data: imageData,
-								mimeType
+								mimeType,
 							},
 							url: `/image/${taskId}`,
 						};
@@ -136,6 +140,140 @@ async function generateImageFromImage(
 		throw new Error('No image data returned from Gemini API');
 	} catch (error) {
 		console.error('Error transforming image:', error);
+		throw error;
+	}
+}
+
+// Helper for Veo Video Generation
+async function generateVideo(params, taskId) {
+	console.log('Starting video generation with params:', JSON.stringify(params, null, 2));
+
+	try {
+		const config = {
+			numberOfVideos: 1,
+			resolution: params.resolution || '720p', // Default to 720p
+		};
+
+		// Aspect ratio is not used for extend_video
+		if (params.mode !== 'extend_video') {
+			config.aspectRatio = params.aspectRatio || '16:9';
+		}
+
+		if (params.fps) {
+			config.fps = parseInt(params.fps);
+		}
+
+		const generateVideoPayload = {
+			model: params.model || 'veo-3.1-fast-generate-preview', // Default to Veo 2.0
+            // model: 'veo-2.0-generate-preview',
+			config: config,
+		};
+
+		if (params.prompt) {
+			generateVideoPayload.prompt = params.prompt;
+		}
+
+		// Handle different modes
+		if (params.mode === 'frames_to_video') {
+			// Handle start frame
+			if (params.startFrame) {
+				generateVideoPayload.image = {
+					imageBytes: params.startFrame.base64,
+					mimeType: params.startFrame.mimeType,
+				};
+				console.log('Added start frame');
+			}
+
+            // Handle end frame (optional)
+            if (params.endFrame) {
+                 generateVideoPayload.config.lastFrame = {
+                    imageBytes: params.endFrame.base64,
+                    mimeType: params.endFrame.mimeType,
+                };
+                console.log('Added end frame');
+            }
+
+		} else if (params.mode === 'references_to_video') {
+			// This mode allows multiple reference images and a style image
+            // NOTE: The Node.js SDK structure might differ slightly from the TS web SDK.
+            // We'll follow the TS structure provided by the user as a guide.
+            const referenceImages = [];
+
+            if (params.referenceImages && Array.isArray(params.referenceImages)) {
+                for (const img of params.referenceImages) {
+                    referenceImages.push({
+                        image: {
+                            imageBytes: img.base64,
+                            mimeType: img.mimeType
+                        },
+                        referenceType: 'ASSET' // Using string literal as enum might not be available consistently on server import
+                    });
+                }
+            }
+
+            if (params.styleImage) {
+                 referenceImages.push({
+                        image: {
+                            imageBytes: params.styleImage.base64,
+                            mimeType: params.styleImage.mimeType
+                        },
+                        referenceType: 'STYLE'
+                    });
+            }
+
+            if (referenceImages.length > 0) {
+                 generateVideoPayload.config.referenceImages = referenceImages;
+            }
+
+		} else if (params.mode === 'extend_video') {
+             // For extend video, we need an input video.
+             // The user's example passes a 'video' object.
+             // In a REST API context, we might receive a 'video' file (upload) or a 'videoUri' (if previously generated).
+             // For now, let's assume we might handle uploaded video -> base64 or similar if the API supports it,
+             // or extended from a previous task ID (not fully implemented in this MVP without persistent storage).
+             // Skipping complex video upload for now unless requested.
+             throw new Error('Extend video mode not fully implemented yet in this server version.');
+		}
+
+		console.log('Submitting video generation request...');
+		let operation = await googleGenAiClient.models.generateVideos(generateVideoPayload);
+		console.log('Video generation operation started. Polling for results...');
+
+		// Poll for completion
+        // Note: The SDK might have a wait helper, but we'll use the loop for control.
+		while (!operation.done) {
+			await new Promise((resolve) => setTimeout(resolve, 5000)); // Poll every 5 seconds
+			console.log('...Generating video...');
+			operation = await googleGenAiClient.operations.getVideosOperation({ operation: operation });
+		}
+
+		if (operation.response && operation.response.generatedVideos && operation.response.generatedVideos.length > 0) {
+			const video = operation.response.generatedVideos[0].video;
+			const videoUri = video.uri;
+            console.log('Video generated. URI:', videoUri);
+
+            // Fetch the video content
+            // IMPORTANT: Request needs the API Key appended
+            const fetchUrl = `${videoUri}&key=${process.env.GOOGLE_API_KEY}`;
+            const response = await axios.get(fetchUrl, { responseType: 'arraybuffer' });
+            const videoBuffer = Buffer.from(response.data);
+
+            const videoFilename = `generated-video-${taskId}.mp4`;
+
+			return {
+				filename: videoFilename,
+                uri: videoUri, // Keep the Google URI if needed
+                buffer: videoBuffer,
+				mimeType: 'video/mp4',
+			};
+
+		} else {
+            console.error('Operation failed or no videos returned:', operation);
+			throw new Error('Video generation failed or returned no videos.');
+		}
+
+	} catch (error) {
+		console.error('Error in generateVideo:', error);
 		throw error;
 	}
 }
@@ -339,6 +477,159 @@ app.get('/image/:taskId', (req, res) => {
 		console.error('Error serving image:', error);
 		res.status(500).json({ error: 'Failed to serve image' });
 	}
+});
+
+// Serve generated videos from memory
+app.get('/video/:taskId', (req, res) => {
+    const taskId = req.params.taskId;
+    const result = processingResults.get(taskId);
+
+    if (!result || !result.result.videoBuffer) {
+        return res.status(404).json({ error: 'Video not found' });
+    }
+
+    try {
+        const videoBuffer = result.result.videoBuffer;
+
+        res.set({
+            'Content-Type': 'video/mp4',
+            'Content-Length': videoBuffer.length,
+            'Cache-Control': 'public, max-age=31536000',
+        });
+
+        res.send(videoBuffer);
+    } catch (error) {
+        console.error('Error serving video:', error);
+        res.status(500).json({ error: 'Failed to serve video' });
+    }
+});
+
+// Generate Video Endpoint
+app.post('/generate-video', upload.fields([
+    { name: 'startFrame', maxCount: 1 },
+    { name: 'endFrame', maxCount: 1 },
+    { name: 'referenceImages', maxCount: 5 },
+    { name: 'styleImage', maxCount: 1 }
+]), async (req, res) => {
+    try {
+        const { 
+            prompt, 
+            mode, 
+            resolution, 
+            aspectRatio, 
+            model, 
+            fps,
+            startFrameUrl,
+            endFrameUrl,
+            styleImageUrl
+        } = req.body;
+        
+        const taskId = uuidv4();
+
+        console.log(`Received video generation request: ${mode}, Task ID: ${taskId}`);
+
+        // Prepare parameters
+        const params = {
+            prompt,
+            mode: mode || 'text_to_video', // Default
+            resolution: resolution || '720p',
+            aspectRatio: aspectRatio || '16:9',
+            model: model || 'veo-3.1-fast-generate-preview',
+            fps: fps
+        };
+
+        // Helper to process image input (file or URL)
+        const processImageInput = async (fileInput, urlInput, taskId, type) => {
+            if (fileInput) {
+                return {
+                    base64: fileInput[0].buffer.toString('base64'),
+                    mimeType: fileInput[0].mimetype
+                };
+            } else if (urlInput) {
+                console.log(`Downloading ${type} from URL: ${urlInput}`);
+                try {
+                    const downloadResult = await downloadImageFromUrl(urlInput, taskId);
+                    return {
+                        base64: downloadResult.buffer.toString('base64'),
+                        mimeType: downloadResult.contentType
+                    };
+                } catch (error) {
+                    console.error(`Failed to download ${type}:`, error);
+                    throw new Error(`Failed to download ${type}: ${error.message}`);
+                }
+            }
+            return null;
+        };
+
+        // Processing Start Frame
+        params.startFrame = await processImageInput(
+            req.files?.startFrame, 
+            startFrameUrl, 
+            taskId, 
+            'start frame'
+        );
+
+        // Processing End Frame
+        params.endFrame = await processImageInput(
+            req.files?.endFrame, 
+            endFrameUrl, 
+            taskId, 
+            'end frame'
+        );
+
+        // Processing Style Image
+        params.styleImage = await processImageInput(
+            req.files?.styleImage, 
+            styleImageUrl, 
+            taskId, 
+            'style image'
+        );
+
+        // Handle Reference Images (Files only for now, URLs checks can be added if needed)
+        if (req.files && req.files.referenceImages) {
+             params.referenceImages = req.files.referenceImages.map(file => ({
+                 base64: file.buffer.toString('base64'),
+                 mimeType: file.mimetype
+            }));
+        }
+
+        // Call generation function
+        const videoResult = await generateVideo(params, taskId);
+
+        // Store result
+		processingResults.set(taskId, {
+			taskId,
+			status: 'completed',
+			mode: params.mode,
+			prompt: params.prompt,
+			result: {
+                message: 'Video generated successfully',
+                filename: videoResult.filename,
+                videoBuffer: videoResult.buffer, // Verify memory usage for large videos
+                uri: videoResult.uri,
+                url: `/video/${taskId}`
+            },
+			timestamp: new Date().toISOString(),
+		});
+
+        res.json({
+            success: true,
+            taskId,
+            status: 'completed',
+            result: {
+                message: 'Video generated successfully',
+                videoUrl: `/video/${taskId}`,
+                dashboardUrl: videoResult.uri
+            }
+        });
+
+    } catch (error) {
+        console.error('Video generation error:', error);
+        res.status(500).json({
+            error: 'Failed to generate video',
+            details: error.message
+        });
+    }
 });
 
 // List all processing results
