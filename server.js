@@ -44,67 +44,57 @@ async function uploadToStorage(buffer, filename, contentType) {
     return null;
 }
 
-// Function to generate actual image using Gemini API (like Python code)
+// Function to generate actual image using Imagen 4.0 via new SDK
 async function generateImageFromText(prompt, taskId) {
 	try {
-		const model = genAI.getGenerativeModel({
-			model: 'gemini-3-pro-image-preview',
-		});
+		console.log(`Generating image with Imagen 4.0 for task: ${taskId}`);
 
-		const result = await model.generateContent({
-			contents: [
-				{
-					role: 'user',
-					parts: [{ text: prompt }],
-				},
-			],
-			generationConfig: {
-				response_modalities: ['IMAGE', 'TEXT'],
-				image_config: {
-					aspect_ratio: '1:1',
-				},
-			},
-		});
-
-		// Extract image data from response (similar to Python inline_data processing)
-		if (
-			result.response &&
-			result.response.candidates &&
-			result.response.candidates[0]
-		) {
-			const candidate = result.response.candidates[0];
-			if (candidate.content && candidate.content.parts) {
-				for (const part of candidate.content.parts) {
-					if (part.inlineData && part.inlineData.data) {
-						// Return base64 data directly for serverless
-						const imageData = part.inlineData.data;
-						const mimeType =
-							part.inlineData.mimeType || 'image/png';
-						const extension = mimeType.split('/')[1] || 'png';
-						const filename = `generated-${taskId}.${extension}`;
-
-						console.log(`Generated image for task: ${taskId}`);
-						return {
-							filename,
-							imageData: {
-								base64Data: imageData,
-								mimeType,
-							},
-							url: `/image/${taskId}`,
-						};
-					}
-				}
+		const response = await googleGenAiClient.models.generateImages({
+			model: 'imagen-4.0-generate-001',
+			prompt: prompt,
+			config: {
+				numberOfImages: 1,
+				aspectRatio: '1:1',
+				outputMimeType: 'image/png'
 			}
+		});
+
+		if (response.generatedImages && response.generatedImages.length > 0) {
+			const generatedImage = response.generatedImages[0];
+			const imageBytes = generatedImage.image.imageBytes;
+			const mimeType = generatedImage.image.mimeType || 'image/png';
+
+			// Handle image data (can be base64 string or raw bytes)
+			let base64Data;
+			if (typeof imageBytes === 'string') {
+				base64Data = imageBytes;
+			} else {
+				base64Data = Buffer.from(imageBytes).toString('base64');
+			}
+
+			const extension = mimeType.split('/')[1] || 'png';
+			const filename = `generated-${taskId}.${extension}`;
+
+			console.log(`Successfully generated image with Imagen 4.0`);
+			return {
+				filename,
+				imageData: {
+					base64Data: base64Data,
+					mimeType,
+				},
+				url: `/image/${taskId}`,
+			};
 		}
 
-		throw new Error('No image data returned from Gemini API');
+		console.error('Imagen 4.0 Response:', JSON.stringify(response, null, 2));
+		throw new Error('No image data returned from Imagen 4.0 API');
 	} catch (error) {
-		console.error('Error generating image:', error);
+		console.error('Error in generateImageFromText:', error);
 		throw error;
 	}
 }
 
-// Function to generate image from existing image + prompt
+// Function to generate image from existing image + prompt using Imagen 4.0
 async function generateImageFromImage(
 	imageBuffer,
 	imageMimeType,
@@ -112,59 +102,58 @@ async function generateImageFromImage(
 	taskId
 ) {
 	try {
-		const model = genAI.getGenerativeModel({
-			model: 'gemini-3-pro-image-preview',
-		});
+        console.log(`Transforming image with Imagen 4.0 for task: ${taskId}`);
 
-		const imageData = await bufferToBase64(imageBuffer, imageMimeType);
+        const response = await googleGenAiClient.models.generateImages({
+            model: 'imagen-4.0-generate-001',
+            prompt: prompt,
+            config: {
+                numberOfImages: 1,
+                aspectRatio: '1:1',
+                outputMimeType: 'image/png',
+                // Using reference images for image-to-image transformation
+                referenceImages: [
+                    {
+                        image: {
+                            imageBytes: imageBuffer.toString('base64'),
+                            mimeType: imageMimeType
+                        },
+                        referenceType: 'CONTROL_IMAGE'
+                    }
+                ]
+            }
+        });
 
-		const result = await model.generateContent({
-			contents: [
-				{
-					role: 'user',
-					parts: [imageData, { text: prompt }],
-				},
-			],
-			generationConfig: {
-				response_modalities: ['IMAGE', 'TEXT'],
-				image_config: {
-					aspect_ratio: '1:1',
-				},
-			},
-		});
+		if (response.generatedImages && response.generatedImages.length > 0) {
+			const generatedImage = response.generatedImages[0];
+			const imageBytes = generatedImage.image.imageBytes;
+			const mimeType = generatedImage.image.mimeType || 'image/png';
 
-		// Return base64 data instead of saving to file (for serverless)
-		if (
-			result.response &&
-			result.response.candidates &&
-			result.response.candidates[0]
-		) {
-			const candidate = result.response.candidates[0];
-			if (candidate.content && candidate.content.parts) {
-				for (const part of candidate.content.parts) {
-					if (part.inlineData && part.inlineData.data) {
-						const imageData = part.inlineData.data;
-						const mimeType =
-							part.inlineData.mimeType || 'image/png';
-						const filename = `transformed-${taskId}.png`;
-
-						console.log(`Generated transformed image: ${filename}`);
-						return {
-							filename,
-							imageData: {
-								base64Data: imageData,
-								mimeType,
-							},
-							url: `/image/${taskId}`,
-						};
-					}
-				}
+			// Handle image data (can be base64 string or raw bytes)
+			let base64Data;
+			if (typeof imageBytes === 'string') {
+				base64Data = imageBytes;
+			} else {
+				base64Data = Buffer.from(imageBytes).toString('base64');
 			}
+
+			const filename = `transformed-${taskId}.png`;
+
+			console.log(`Successfully transformed image with Imagen 4.0`);
+			return {
+				filename,
+				imageData: {
+					base64Data: base64Data,
+					mimeType,
+				},
+				url: `/image/${taskId}`,
+			};
 		}
 
-		throw new Error('No image data returned from Gemini API');
+        console.error('Imagen 4.0 Response:', JSON.stringify(response, null, 2));
+		throw new Error('No image data returned from Imagen 4.0 API');
 	} catch (error) {
-		console.error('Error transforming image:', error);
+		console.error('Error in generateImageFromImage:', error);
 		throw error;
 	}
 }
