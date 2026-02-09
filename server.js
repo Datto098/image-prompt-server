@@ -541,18 +541,18 @@ app.post('/generate-video', upload.fields([
     { name: 'styleImage', maxCount: 1 }
 ]), async (req, res) => {
     try {
-        const { 
-            prompt, 
-            mode, 
-            resolution, 
-            aspectRatio, 
-            model, 
+        const {
+            prompt,
+            mode,
+            resolution,
+            aspectRatio,
+            model,
             fps,
             startFrameUrl,
             endFrameUrl,
             styleImageUrl
         } = req.body;
-        
+
         const taskId = uuidv4();
 
         console.log(`Received video generation request: ${mode}, Task ID: ${taskId}`);
@@ -592,25 +592,25 @@ app.post('/generate-video', upload.fields([
 
         // Processing Start Frame
         params.startFrame = await processImageInput(
-            req.files?.startFrame, 
-            startFrameUrl, 
-            taskId, 
+            req.files?.startFrame,
+            startFrameUrl,
+            taskId,
             'start frame'
         );
 
         // Processing End Frame
         params.endFrame = await processImageInput(
-            req.files?.endFrame, 
-            endFrameUrl, 
-            taskId, 
+            req.files?.endFrame,
+            endFrameUrl,
+            taskId,
             'end frame'
         );
 
         // Processing Style Image
         params.styleImage = await processImageInput(
-            req.files?.styleImage, 
-            styleImageUrl, 
-            taskId, 
+            req.files?.styleImage,
+            styleImageUrl,
+            taskId,
             'style image'
         );
 
@@ -871,7 +871,7 @@ async function processWithMode(
 				}
 
 				const model = genAI.getGenerativeModel({
-					model: 'gemini-1.5-flash',
+					model: 'gemini-3-pro-image-preview',
 				});
 				const imageForDesc = await bufferToBase64(
 					imageBuffer,
