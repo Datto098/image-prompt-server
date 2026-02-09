@@ -49,20 +49,27 @@ async function generateImageFromText(prompt, taskId) {
 	try {
 		console.log(`Generating image with Imagen 4.0 for task: ${taskId}`);
 
-		const response = await googleGenAiClient.models.generateImages({
-			model: 'imagen-4.0-generate-001',
-			prompt: prompt,
+		const response = await googleGenAiClient.models.generateContent({
+			model: 'gemini-3-pro-image-preview',
+			contents: [{
+                role: 'user',
+                parts: [{ text: prompt }]
+            }],
 			config: {
-				numberOfImages: 1,
-				aspectRatio: '1:1',
-				outputMimeType: 'image/png'
+                responseModalities: ['IMAGE'],
+				imageConfig: {
+                    aspectRatio: '1:1',
+                    imageSize: '1K'
+                }
 			}
 		});
 
-		if (response.generatedImages && response.generatedImages.length > 0) {
-			const generatedImage = response.generatedImages[0];
-			const imageBytes = generatedImage.image.imageBytes;
-			const mimeType = generatedImage.image.mimeType || 'image/png';
+		if (response.candidates && response.candidates.length > 0) {
+            const part = response.candidates[0].content.parts.find(p => p.inlineData);
+            if (!part) throw new Error('No image data in response parts');
+
+			const imageBytes = part.inlineData.data;
+			const mimeType = part.inlineData.mimeType || 'image/png';
 
 			// Handle image data (can be base64 string or raw bytes)
 			let base64Data;
@@ -75,7 +82,7 @@ async function generateImageFromText(prompt, taskId) {
 			const extension = mimeType.split('/')[1] || 'png';
 			const filename = `generated-${taskId}.${extension}`;
 
-			console.log(`Successfully generated image with Imagen 4.0`);
+			console.log(`Successfully generated image with Gemini 3`);
 			return {
 				filename,
 				imageData: {
@@ -86,8 +93,8 @@ async function generateImageFromText(prompt, taskId) {
 			};
 		}
 
-		console.error('Imagen 4.0 Response:', JSON.stringify(response, null, 2));
-		throw new Error('No image data returned from Imagen 4.0 API');
+		console.error('Gemini 3 Response:', JSON.stringify(response, null, 2));
+		throw new Error('No image data returned from Gemini API');
 	} catch (error) {
 		console.error('Error in generateImageFromText:', error);
 		throw error;
@@ -102,32 +109,37 @@ async function generateImageFromImage(
 	taskId
 ) {
 	try {
-        console.log(`Transforming image with Imagen 4.0 for task: ${taskId}`);
-
-        const response = await googleGenAiClient.models.generateImages({
-            model: 'imagen-4.0-generate-001',
-            prompt: prompt,
-            config: {
-                numberOfImages: 1,
-                aspectRatio: '1:1',
-                outputMimeType: 'image/png',
-                // Using reference images for image-to-image transformation
-                referenceImages: [
-                    {
-                        image: {
-                            imageBytes: imageBuffer.toString('base64'),
-                            mimeType: imageMimeType
+        const response = await googleGenAiClient.models.generateContent({
+            model: 'gemini-3-pro-image-preview',
+            contents: [
+                {
+                    role: 'user',
+                    parts: [
+                        {
+                            inlineData: {
+                                data: imageBuffer.toString('base64'),
+                                mimeType: imageMimeType
+                            }
                         },
-                        referenceType: 'CONTROL_IMAGE'
-                    }
-                ]
+                        { text: prompt }
+                    ]
+                }
+            ],
+            config: {
+                responseModalities: ['IMAGE'],
+                imageConfig: {
+                    aspectRatio: '1:1',
+                    imageSize: '1K'
+                }
             }
         });
 
-		if (response.generatedImages && response.generatedImages.length > 0) {
-			const generatedImage = response.generatedImages[0];
-			const imageBytes = generatedImage.image.imageBytes;
-			const mimeType = generatedImage.image.mimeType || 'image/png';
+		if (response.candidates && response.candidates.length > 0) {
+            const part = response.candidates[0].content.parts.find(p => p.inlineData);
+            if (!part) throw new Error('No image data in response parts');
+
+			const imageBytes = part.inlineData.data;
+			const mimeType = part.inlineData.mimeType || 'image/png';
 
 			// Handle image data (can be base64 string or raw bytes)
 			let base64Data;
@@ -139,7 +151,7 @@ async function generateImageFromImage(
 
 			const filename = `transformed-${taskId}.png`;
 
-			console.log(`Successfully transformed image with Imagen 4.0`);
+			console.log(`Successfully transformed image with Gemini 3`);
 			return {
 				filename,
 				imageData: {
